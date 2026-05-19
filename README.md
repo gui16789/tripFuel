@@ -72,6 +72,27 @@ uvicorn app:app --host 127.0.0.1 --port 8000
 
 Then reverse proxy external traffic to `127.0.0.1:8000`.
 
+## Zeabur Deployment
+
+This repository includes `zbpack.json` so Zeabur can use `app.py` as the Python entry file and install dependencies with `pip`.
+
+1. Push the latest code to GitHub.
+2. Open Zeabur and create a new project.
+3. Choose **Deploy New Service** from GitHub.
+4. Select `gui16789/tripFuel`.
+5. Add service variable:
+
+```text
+AMAP_KEY=your_amap_web_service_key
+```
+
+6. Deploy the service.
+7. In the service **Domain** page, generate or bind a public domain.
+
+Zeabur injects `PORT` automatically. `app.py` reads `PORT` and binds to `0.0.0.0`, so no hard-coded cloud port is needed.
+
+Important: the private source workbook `加油明细.xlsx` is ignored by Git. Without this file, route search and manual preview can still open, but fuel detail import/export and Excel export need a workbook template. For a private deployment, upload or mount your workbook on the server, or keep the deployment internal and commit a sanitized template workbook after removing private data.
+
 ## Required Local Data
 
 The source workbook is intentionally not committed because it may contain private reimbursement data.
