@@ -116,6 +116,7 @@ def driving_distance(origin_location: str, destination_location: str, key: str) 
         "distance_km": round(distance_m / 1000),
         "distance_km_exact": round(distance_m / 1000, 2),
         "duration_min": round(duration_s / 60, 1),
+        "duration_s": duration_s,
     }
 
 
@@ -340,7 +341,7 @@ def route(payload: RouteRequest, x_amap_key: str | None = Header(default=None)) 
     if not paths:
         raise HTTPException(status_code=502, detail="高德没有返回可用驾车路线。")
 
-    distance_m = int(float(paths[0]["distance"]))
+    outbound_distance_m = int(float(paths[0]["distance"]))
     duration_s = int(float(paths[0].get("duration") or 0))
     steps = [
         {
@@ -350,24 +351,37 @@ def route(payload: RouteRequest, x_amap_key: str | None = Header(default=None)) 
         }
         for step in paths[0].get("steps") or []
     ]
+    outbound_segments = [
+        {
+            **driving_distance(
+                origin_location if index == 0 else payload.stops[index - 1].get("location"),
+                stop.get("location"),
+                key,
+            ),
+            "from": payload.origin if index == 0 else payload.stops[index - 1].get("name"),
+            "to": stop.get("name"),
+            "location": stop.get("location"),
+        }
+        for index, stop in enumerate(payload.stops)
+    ]
+    return_segment = {
+        **driving_distance(locations[-1], origin_location, key),
+        "from": payload.stops[-1].get("name"),
+        "to": payload.origin,
+        "location": origin_location,
+        "return_trip": True,
+    }
+    distance_m = outbound_distance_m + int(return_segment["distance_m"])
+    duration_s += int(return_segment.get("duration_s") or 0)
     return {
         "distance_m": distance_m,
         "distance_km": round(distance_m / 1000),
         "distance_km_exact": round(distance_m / 1000, 2),
         "duration_min": round(duration_s / 60, 1),
-        "segments": [
-            {
-                **driving_distance(
-                    origin_location if index == 0 else payload.stops[index - 1].get("location"),
-                    stop.get("location"),
-                    key,
-                ),
-                "from": payload.origin if index == 0 else payload.stops[index - 1].get("name"),
-                "to": stop.get("name"),
-                "location": stop.get("location"),
-            }
-            for index, stop in enumerate(payload.stops)
-        ],
+        "outbound_distance_m": outbound_distance_m,
+        "return_distance_m": return_segment["distance_m"],
+        "round_trip": True,
+        "segments": [*outbound_segments, return_segment],
         "steps": steps,
     }
 

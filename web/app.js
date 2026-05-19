@@ -823,7 +823,7 @@ async function calculateRoute() {
     });
     state.route = data;
     updateRouteCard();
-    setStatus(`驾车距离 ${data.distance_km_exact} km，已按 ${data.distance_km} km 记入。`);
+    setStatus(`往返驾车距离 ${data.distance_km_exact} km，已按 ${data.distance_km} km 记入。`);
     return data;
   } catch (error) {
     setStatus(error.message, true);

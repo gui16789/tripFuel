@@ -111,7 +111,7 @@ class AmapClient:
         if not stops:
             raise ValueError("Trip must contain at least one destination stop.")
 
-        cache_key = f"drive::{self.city}::{origin}::{'|'.join(stops)}"
+        cache_key = f"drive-roundtrip::{self.city}::{origin}::{'|'.join(stops)}"
         if cache_key in self.cache:
             return int(self.cache[cache_key])
 
@@ -131,12 +131,27 @@ class AmapClient:
         if waypoints:
             params["waypoints"] = waypoints
 
-        data = self._get_json(DRIVING_URL, params)
-        paths = ((data.get("route") or {}).get("paths")) or []
-        if not paths:
+        outbound_data = self._get_json(DRIVING_URL, params)
+        outbound_paths = ((outbound_data.get("route") or {}).get("paths")) or []
+        if not outbound_paths:
             raise RuntimeError(f"AMap returned no driving path: {origin} -> {stops}")
 
-        distance_m = int(float(paths[0]["distance"]))
+        return_data = self._get_json(
+            DRIVING_URL,
+            {
+                "key": self.key,
+                "origin": destination_location,
+                "destination": origin_location,
+                "strategy": 0,
+                "extensions": "base",
+                "output": "JSON",
+            },
+        )
+        return_paths = ((return_data.get("route") or {}).get("paths")) or []
+        if not return_paths:
+            raise RuntimeError(f"AMap returned no return driving path: {stops[-1]} -> {origin}")
+
+        distance_m = int(float(outbound_paths[0]["distance"])) + int(float(return_paths[0]["distance"]))
         self.cache[cache_key] = distance_m
         return distance_m
 
