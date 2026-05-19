@@ -437,6 +437,39 @@ async function loadFuelDetails(source = "draft") {
   }
 }
 
+async function uploadFuelDetailsWorkbook() {
+  const input = $("fuelWorkbookInput");
+  const file = input.files?.[0];
+  if (!file) return;
+  setFuelStatus(`正在上传并读取 ${file.name} ...`);
+  setStatus("正在上传并读取 Excel...");
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch("/api/fuel-details/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || "上传读取失败");
+    }
+    state.fuelDetails = data.rows || [];
+    renderFuelDetails();
+    let message = `已从上传 Excel 读取 ${state.fuelDetails.length} 条加油明细。`;
+    if (!state.fuelDetails.length) {
+      message = "上传成功，但“加油明细”sheet 第3行起没有读取到有效记录。";
+    }
+    setFuelStatus(message, !state.fuelDetails.length);
+    setStatus(message, !state.fuelDetails.length);
+  } catch (error) {
+    setFuelStatus(error.message, true);
+    setStatus(error.message, true);
+  } finally {
+    input.value = "";
+  }
+}
+
 async function saveFuelDetailsDraft() {
   state.fuelDetails = collectFuelDetails();
   try {
@@ -986,7 +1019,8 @@ $("poolKeyword").addEventListener("keydown", (event) => {
 });
 $("saveDestinationPoolBtn").addEventListener("click", saveDestinationPool);
 $("addFuelDetailBtn").addEventListener("click", addFuelDetailRow);
-$("reloadFuelDetailsBtn").addEventListener("click", () => loadFuelDetails("source"));
+$("reloadFuelDetailsBtn").addEventListener("click", () => $("fuelWorkbookInput").click());
+$("fuelWorkbookInput").addEventListener("change", uploadFuelDetailsWorkbook);
 $("saveFuelDetailsBtn").addEventListener("click", saveFuelDetailsDraft);
 $("exportFuelDetailsBtn").addEventListener("click", exportFuelDetails);
 document.querySelectorAll(".tab-button").forEach((button) => {

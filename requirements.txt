@@ -5,3 +5,4 @@ openpyxl
 pydantic
 pdfplumber
 beautifulsoup4
+python-multipart

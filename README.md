@@ -9,6 +9,7 @@ TripFuel is a local web editor for building vehicle usage records from fuel deta
 - Optional waypoints, with segment distance display.
 - Local Jilin Changchun 92# gasoline price table.
 - Fuel detail maintenance tab.
+- Upload a local Excel workbook and read the `加油明细` sheet.
 - Auto-generate vehicle usage records by fuel interval.
 - Excel export from the browser.
 
@@ -93,7 +94,9 @@ Zeabur injects `PORT` automatically. `app.py` reads `PORT` and binds to `0.0.0.0
 
 The private source workbook `加油明细.xlsx` is ignored by Git. The repository includes a sanitized fallback template at `templates/加油明细模板.xlsx`, so Zeabur can export Excel files without private workbook data.
 
-If you want to use a private workbook on the server, upload or mount it and set:
+Users can upload their own workbook from the **加油明细维护** tab. The server only imports rows from the uploaded workbook's `加油明细` sheet. Uploading a workbook does not replace the system Excel template.
+
+If you want to use a private workbook on the server without uploading it from the page, mount it and set:
 
 ```text
 SOURCE_WORKBOOK=/path/to/加油明细.xlsx

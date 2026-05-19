@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>车辆使用明细编辑器</title>
-    <link rel="stylesheet" href="/web/styles.css?v=21" />
+    <link rel="stylesheet" href="/web/styles.css?v=22" />
   </head>
   <body>
     <main class="shell">
@@ -157,7 +157,8 @@
             <p class="subtle">维护 Excel 中的“加油明细”sheet，备注列按加油升数处理。</p>
           </div>
           <div class="toolbar">
-            <button class="ghost" id="reloadFuelDetailsBtn" type="button">从Excel读取</button>
+            <input id="fuelWorkbookInput" type="file" accept=".xlsx" hidden />
+            <button class="ghost" id="reloadFuelDetailsBtn" type="button">上传Excel读取</button>
             <button class="ghost" id="saveFuelDetailsBtn" type="button">保存草稿</button>
             <button class="primary" id="exportFuelDetailsBtn" type="button">导出Excel</button>
           </div>
@@ -272,6 +273,6 @@
       </div>
     </main>
 
-    <script src="/web/app.js?v=21"></script>
+    <script src="/web/app.js?v=22"></script>
   </body>
 </html>

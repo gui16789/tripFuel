@@ -4,13 +4,14 @@ import csv
 import json
 import os
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import requests
 import uvicorn
 import openpyxl
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,9 +28,7 @@ FUEL_DETAILS_DRAFT_PATH = BASE_DIR / "fuel_details_editor_records.json"
 DESTINATION_POOL_PATH = BASE_DIR / "destination_pool.json"
 PRIVATE_WORKBOOK = BASE_DIR / "加油明细.xlsx"
 TEMPLATE_WORKBOOK = BASE_DIR / "templates" / "加油明细模板.xlsx"
-SOURCE_WORKBOOK = Path(os.environ.get("SOURCE_WORKBOOK", PRIVATE_WORKBOOK))
-if not SOURCE_WORKBOOK.exists() and TEMPLATE_WORKBOOK.exists():
-    SOURCE_WORKBOOK = TEMPLATE_WORKBOOK
+CONFIGURED_WORKBOOK = Path(os.environ["SOURCE_WORKBOOK"]) if os.environ.get("SOURCE_WORKBOOK") else None
 DEFAULT_OUTPUT = BASE_DIR / "加油明细_在线编辑器生成.xlsx"
 
 ORIGIN_NAME = "安盟财产保险有限公司长春中心支公司"
@@ -71,6 +70,31 @@ class FuelDetailsRequest(BaseModel):
 
 class DestinationPoolRequest(BaseModel):
     destinations: list[dict[str, Any]]
+
+
+def active_workbook_path() -> Path:
+    candidates = [
+        CONFIGURED_WORKBOOK,
+        PRIVATE_WORKBOOK,
+        TEMPLATE_WORKBOOK,
+    ]
+    for path in candidates:
+        if path and path.exists():
+            return path
+    return PRIVATE_WORKBOOK
+
+
+def is_template_workbook(path: Path) -> bool:
+    return path.exists() and TEMPLATE_WORKBOOK.exists() and path.resolve() == TEMPLATE_WORKBOOK.resolve()
+
+
+def workbook_payload(rows: list[dict[str, Any]], source: str, workbook_path: Path) -> dict[str, Any]:
+    return {
+        "rows": rows,
+        "source": source,
+        "workbook": str(workbook_path),
+        "is_template": is_template_workbook(workbook_path),
+    }
 
 
 def amap_key(x_amap_key: str | None = Header(default=None)) -> str:
@@ -165,8 +189,8 @@ def price_for_date(date_text: str) -> dict[str, Any] | None:
     }
 
 
-def read_fuel_details_from_workbook() -> list[dict[str, Any]]:
-    workbook = openpyxl.load_workbook(SOURCE_WORKBOOK, data_only=True)
+def read_fuel_details_from_workbook(workbook_source: Any | None = None) -> list[dict[str, Any]]:
+    workbook = openpyxl.load_workbook(workbook_source or active_workbook_path(), data_only=True)
     ws = workbook["加油明细"]
     rows: list[dict[str, Any]] = []
 
@@ -194,8 +218,8 @@ def read_fuel_details_from_workbook() -> list[dict[str, Any]]:
     return rows
 
 
-def write_fuel_details(output_path: Path, rows: list[dict[str, Any]]) -> None:
-    workbook = openpyxl.load_workbook(SOURCE_WORKBOOK)
+def write_fuel_details(output_path: Path, rows: list[dict[str, Any]], workbook_path: Path | None = None) -> None:
+    workbook = openpyxl.load_workbook(workbook_path or active_workbook_path())
     ws = workbook["加油明细"]
 
     for merged in list(ws.merged_cells.ranges):
@@ -249,12 +273,14 @@ def index() -> FileResponse:
 
 @app.get("/api/config")
 def config() -> dict[str, Any]:
+    workbook_path = active_workbook_path()
     return {
         "origin": ORIGIN_NAME,
         "city": CITY,
         "fuel_rate": FUEL_RATE,
         "has_server_key": bool(os.environ.get("AMAP_KEY")),
-        "source_workbook": str(SOURCE_WORKBOOK),
+        "source_workbook": str(workbook_path),
+        "is_template_workbook": is_template_workbook(workbook_path),
     }
 
 
@@ -404,23 +430,45 @@ def save_records(payload: SaveRecordsRequest) -> dict[str, Any]:
 def fuel_details() -> dict[str, Any]:
     if FUEL_DETAILS_DRAFT_PATH.exists():
         data = json.loads(FUEL_DETAILS_DRAFT_PATH.read_text(encoding="utf-8"))
-        return {**data, "source": "draft", "workbook": str(SOURCE_WORKBOOK)}
-    return {
-        "rows": read_fuel_details_from_workbook(),
-        "source": "workbook",
-        "workbook": str(SOURCE_WORKBOOK),
-        "is_template": SOURCE_WORKBOOK == TEMPLATE_WORKBOOK,
-    }
+        return {**data, "source": "draft", "workbook": str(active_workbook_path())}
+    workbook_path = active_workbook_path()
+    return workbook_payload(read_fuel_details_from_workbook(workbook_path), "workbook", workbook_path)
 
 
 @app.get("/api/fuel-details/source")
 def fuel_details_source() -> dict[str, Any]:
-    return {
-        "rows": read_fuel_details_from_workbook(),
-        "source": "workbook",
-        "workbook": str(SOURCE_WORKBOOK),
-        "is_template": SOURCE_WORKBOOK == TEMPLATE_WORKBOOK,
-    }
+    workbook_path = active_workbook_path()
+    return workbook_payload(read_fuel_details_from_workbook(workbook_path), "workbook", workbook_path)
+
+
+@app.post("/api/fuel-details/upload")
+async def upload_fuel_details_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的 Excel 文件。")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="上传文件为空。")
+
+    try:
+        buffer = BytesIO(content)
+        workbook = openpyxl.load_workbook(buffer, read_only=True, data_only=True)
+        missing = {"加油明细"} - set(workbook.sheetnames)
+        workbook.close()
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Excel 缺少必要 sheet：{', '.join(sorted(missing))}")
+        rows = read_fuel_details_from_workbook(BytesIO(content))
+        return {
+            "rows": rows,
+            "source": "upload",
+            "workbook": filename,
+            "is_template": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取上传的 Excel：{exc}") from exc
 
 
 @app.post("/api/fuel-details/draft")
@@ -436,7 +484,7 @@ def export_fuel_details(payload: FuelDetailsRequest) -> FileResponse:
     output_path = BASE_DIR / output_name
     if output_path.suffix.lower() != ".xlsx":
         output_path = output_path.with_suffix(".xlsx")
-    write_fuel_details(output_path, payload.rows)
+    write_fuel_details(output_path, payload.rows, active_workbook_path())
     return FileResponse(
         output_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -476,7 +524,7 @@ def export(payload: ExportRequest) -> FileResponse:
     output_path = BASE_DIR / output_name
     if output_path.suffix.lower() != ".xlsx":
         output_path = output_path.with_suffix(".xlsx")
-    write_usage_sheet(SOURCE_WORKBOOK, output_path, trips, FUEL_RATE)
+    write_usage_sheet(active_workbook_path(), output_path, trips, FUEL_RATE)
     return FileResponse(
         output_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
