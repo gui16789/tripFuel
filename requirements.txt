@@ -3,3 +3,5 @@ uvicorn
 requests
 openpyxl
 pydantic
+pdfplumber
+beautifulsoup4
