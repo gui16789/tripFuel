@@ -16,6 +16,13 @@ function setStatus(message, isError = false) {
   status.classList.toggle("error", isError);
 }
 
+function setFuelStatus(message, isError = false) {
+  const status = $("fuelStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
 function amapHeaders() {
   const key = $("amapKey").value.trim();
   return key ? { "X-AMAP-Key": key } : {};
@@ -410,12 +417,22 @@ function addFuelDetailRow() {
 }
 
 async function loadFuelDetails(source = "draft") {
+  const fromSource = source === "source";
+  setFuelStatus(fromSource ? "正在从 Excel 工作簿读取加油明细..." : "正在加载加油明细...");
   try {
-    const data = await api(source === "source" ? "/api/fuel-details/source" : "/api/fuel-details", { method: "GET" });
+    const data = await api(fromSource ? "/api/fuel-details/source" : "/api/fuel-details", { method: "GET" });
     state.fuelDetails = data.rows || [];
     renderFuelDetails();
-    setStatus(source === "source" ? "已从 Excel 读取加油明细。" : "已加载加油明细。");
+    let message = fromSource ? `已从 Excel 读取 ${state.fuelDetails.length} 条加油明细。` : `已加载 ${state.fuelDetails.length} 条加油明细。`;
+    if (fromSource && data.is_template && !state.fuelDetails.length) {
+      message = "当前云端使用的是脱敏空模板，没有可读取的加油记录。请手动新增或配置 SOURCE_WORKBOOK 指向真实工作簿。";
+    } else if (fromSource && !state.fuelDetails.length) {
+      message = "Excel 中没有读取到加油记录，请确认“加油明细”sheet 第3行起有日期、金额和升数。";
+    }
+    setFuelStatus(message, fromSource && !state.fuelDetails.length);
+    setStatus(message, fromSource && !state.fuelDetails.length);
   } catch (error) {
+    setFuelStatus(error.message, true);
     setStatus(error.message, true);
   }
 }

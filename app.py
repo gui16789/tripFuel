@@ -403,13 +403,24 @@ def save_records(payload: SaveRecordsRequest) -> dict[str, Any]:
 @app.get("/api/fuel-details")
 def fuel_details() -> dict[str, Any]:
     if FUEL_DETAILS_DRAFT_PATH.exists():
-        return json.loads(FUEL_DETAILS_DRAFT_PATH.read_text(encoding="utf-8"))
-    return {"rows": read_fuel_details_from_workbook()}
+        data = json.loads(FUEL_DETAILS_DRAFT_PATH.read_text(encoding="utf-8"))
+        return {**data, "source": "draft", "workbook": str(SOURCE_WORKBOOK)}
+    return {
+        "rows": read_fuel_details_from_workbook(),
+        "source": "workbook",
+        "workbook": str(SOURCE_WORKBOOK),
+        "is_template": SOURCE_WORKBOOK == TEMPLATE_WORKBOOK,
+    }
 
 
 @app.get("/api/fuel-details/source")
 def fuel_details_source() -> dict[str, Any]:
-    return {"rows": read_fuel_details_from_workbook()}
+    return {
+        "rows": read_fuel_details_from_workbook(),
+        "source": "workbook",
+        "workbook": str(SOURCE_WORKBOOK),
+        "is_template": SOURCE_WORKBOOK == TEMPLATE_WORKBOOK,
+    }
 
 
 @app.post("/api/fuel-details/draft")

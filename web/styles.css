@@ -887,6 +887,22 @@ tr:last-child td {
   justify-content: flex-start;
 }
 
+.fuel-status {
+  min-height: 40px;
+  padding: 10px 13px;
+  border: 1px solid #d8e0cf;
+  border-radius: 8px;
+  color: var(--green);
+  background: #f5f9ef;
+  font-size: 13px;
+}
+
+.fuel-status.error {
+  color: var(--red);
+  border-color: rgba(216, 76, 73, 0.36);
+  background: var(--red-soft);
+}
+
 .fuel-table-wrap {
   overflow-x: hidden;
 }
