@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local caches and generated drafts
+.amap_cache.json
+vehicle_usage_editor_records.json
+fuel_details_editor_records.json
+destination_pool.json
+vehicle_usage_destinations.csv
+
+# Local business workbooks and exports
+*.xlsx
+~$*.xlsx
+
+# Source announcement PDFs downloaded during research
+P*.pdf
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

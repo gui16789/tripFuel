@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>车辆使用明细编辑器</title>
+    <link rel="stylesheet" href="/web/styles.css?v=19" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Jilin 92# fuel · AMap route</p>
+          <h1>车辆使用明细编辑器</h1>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="工作区切换">
+        <button class="tab-button active" type="button" data-tab="usage">车辆使用明细</button>
+        <button class="tab-button" type="button" data-tab="fuel">加油明细维护</button>
+      </nav>
+
+      <section class="workspace tab-panel active" id="usageTab">
+        <aside class="panel editor">
+          <div class="section-title">
+            <h2>录入行程</h2>
+            <button class="ghost" id="refreshFuelBtn" type="button">刷新油价</button>
+          </div>
+
+          <div class="status" id="status">准备就绪</div>
+
+          <label>
+            高德 Key
+            <input id="amapKey" type="password" autocomplete="off" placeholder="留空则使用服务端环境变量" />
+          </label>
+
+          <label>
+            出发地
+            <input id="origin" type="text" readonly />
+          </label>
+
+          <div class="two-col">
+            <label>
+              日期
+              <input id="date" type="date" />
+            </label>
+            <label>
+              92号汽油油价（元/L）
+              <input id="fuelPrice" type="number" step="0.01" />
+            </label>
+          </div>
+
+          <label id="keywordLabel">
+            目的地关键词
+            <div class="search-row">
+              <input id="keyword" type="text" placeholder="例如：经开区工业园" />
+              <button id="searchBtn" type="button">搜索</button>
+            </div>
+          </label>
+
+          <div class="candidates" id="candidates"></div>
+
+          <div class="route-card">
+            <div class="route-card-head">
+              <div>
+                <span>路线</span>
+                <strong id="routeModeText">选择候选后自动设为目的地</strong>
+              </div>
+              <div class="stop-actions">
+                <button class="ghost" id="addWaypointBtn" type="button">＋ 添加途经点</button>
+                <button class="ghost" id="clearRouteBtn" type="button">清空路线</button>
+              </div>
+            </div>
+            <div class="stops-list" id="stopsList">
+              <span>路线停靠点</span>
+              <p>尚未添加途经点或最终地点。</p>
+            </div>
+            <div class="route-metrics">
+              <div>
+                <span>里程</span>
+                <strong id="distanceText">-</strong>
+              </div>
+              <div>
+                <span>金额</span>
+                <strong id="amountText">-</strong>
+              </div>
+            </div>
+            <div class="segment-list" id="segmentList"></div>
+          </div>
+
+          <div class="actions">
+            <button id="routeBtn" type="button">▣ 计算距离</button>
+            <button id="addBtn" type="button" class="primary">加入明细</button>
+          </div>
+        </aside>
+
+        <section class="panel ledger">
+          <div class="section-title">
+            <h2>明细记录</h2>
+            <div class="toolbar">
+              <button class="ghost" id="autoGenerateBtn" type="button">自动生成</button>
+              <button class="ghost" id="saveBtn" type="button">保存草稿</button>
+              <button class="primary" id="exportBtn" type="button">导出Excel</button>
+            </div>
+          </div>
+
+          <div class="summary-grid">
+            <div>
+              <span>记录</span>
+              <strong id="countSum">0</strong>
+            </div>
+            <div>
+              <span>总里程</span>
+              <strong id="kmSum">0 km</strong>
+            </div>
+            <div>
+              <span>总燃油</span>
+              <strong id="literSum">0 L</strong>
+            </div>
+            <div>
+              <span>总费用</span>
+              <strong id="amountSum">0 元</strong>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="excel-preview">
+              <thead>
+                <tr>
+                  <th colspan="10" class="excel-title">车辆使用明细表（油车）</th>
+                </tr>
+                <tr>
+                  <th>序号</th>
+                  <th>日期</th>
+                  <th>出发地</th>
+                  <th>目的地</th>
+                  <th>总里程<br />（km）</th>
+                  <th>所耗燃油数量<br />（L）</th>
+                  <th>燃油费单价<br />（元/L）</th>
+                  <th>燃油费总额<br />（元）</th>
+                  <th>百公里油耗<br />（L/100km）</th>
+                  <th class="screen-only">操作</th>
+                </tr>
+              </thead>
+              <tbody id="recordsBody"></tbody>
+            </table>
+          </div>
+
+          <div class="price-strip" id="priceStrip"></div>
+        </section>
+      </section>
+
+      <section class="panel fuel-panel tab-panel" id="fuelTab">
+        <div class="section-title">
+          <div>
+            <h2>加油明细维护</h2>
+            <p class="subtle">维护 Excel 中的“加油明细”sheet，备注列按加油升数处理。</p>
+          </div>
+          <div class="toolbar">
+            <button class="ghost" id="reloadFuelDetailsBtn" type="button">从Excel读取</button>
+            <button class="ghost" id="saveFuelDetailsBtn" type="button">保存草稿</button>
+            <button class="primary" id="exportFuelDetailsBtn" type="button">导出Excel</button>
+          </div>
+        </div>
+
+        <div class="summary-grid fuel-summary">
+          <div>
+            <span>记录</span>
+            <strong id="fuelDetailCount">0</strong>
+          </div>
+          <div>
+            <span>加油金额</span>
+            <strong id="fuelAmountSum">0 元</strong>
+          </div>
+          <div>
+            <span>加油升数</span>
+            <strong id="fuelLiterSum">0 L</strong>
+          </div>
+          <div>
+            <span>平均单价</span>
+            <strong id="fuelAvgPrice">0 元/L</strong>
+          </div>
+        </div>
+
+        <div class="fuel-actions">
+          <button id="addFuelDetailBtn" type="button">＋ 新增加油记录</button>
+        </div>
+
+        <div class="table-wrap fuel-table-wrap">
+          <table class="fuel-detail-table">
+            <thead>
+              <tr>
+                <th>序号</th>
+                <th>加油日期</th>
+                <th>车辆</th>
+                <th>驾驶员</th>
+                <th>加油金额</th>
+                <th>加油升数</th>
+                <th>单价</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="fuelDetailsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="modal-backdrop" id="autoGenerateModal" aria-hidden="true">
+        <section class="modal">
+          <div class="section-title">
+            <div>
+              <h2>根据加油明细自动生成</h2>
+              <p class="subtle">按加油区间匹配油价，每天最多一条，避开周末，生成后进入右侧预览。</p>
+            </div>
+            <button class="ghost" id="closeAutoGenerateBtn" type="button">关闭</button>
+          </div>
+
+          <div class="auto-grid">
+            <label>
+              生成区间
+              <select id="autoIntervalSelect"></select>
+            </label>
+            <label>
+              目标使用比例
+              <input id="autoUsageRatio" type="number" step="1" min="80" max="100" value="85" />
+            </label>
+            <label>
+              单公里油耗
+              <input id="autoFuelRate" type="number" step="0.001" value="0.09" />
+            </label>
+          </div>
+
+          <div class="pool-editor">
+            <div class="section-title compact-title">
+              <div>
+                <h2>目的地池</h2>
+                <p class="subtle">自动生成只会抽取已确认的高德地点。</p>
+              </div>
+              <button class="ghost" id="saveDestinationPoolBtn" type="button">保存目的地池</button>
+            </div>
+
+            <label>
+              添加目的地
+              <div class="search-row">
+                <input id="poolKeyword" type="text" placeholder="输入业务地点关键词，例如：净月开发区产业园" />
+                <button id="poolSearchBtn" type="button">搜索</button>
+              </div>
+            </label>
+            <div class="pool-candidates" id="poolCandidates"></div>
+            <div class="destination-pool-list" id="destinationPoolList"></div>
+          </div>
+
+          <div class="auto-options">
+            <label class="check-line">
+              <input id="autoSkipWeekends" type="checkbox" checked />
+              避开周末
+            </label>
+            <label class="check-line">
+              <input id="autoAppendRecords" type="checkbox" checked />
+              追加到当前明细
+            </label>
+          </div>
+
+          <div class="auto-result" id="autoGenerateResult">等待生成。</div>
+
+          <div class="actions modal-actions">
+            <button id="runAutoGenerateBtn" type="button" class="primary">开始生成</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="/web/app.js?v=19"></script>
+  </body>
+</html>
