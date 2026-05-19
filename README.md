@@ -91,17 +91,25 @@ AMAP_KEY=your_amap_web_service_key
 
 Zeabur injects `PORT` automatically. `app.py` reads `PORT` and binds to `0.0.0.0`, so no hard-coded cloud port is needed.
 
-Important: the private source workbook `加油明细.xlsx` is ignored by Git. Without this file, route search and manual preview can still open, but fuel detail import/export and Excel export need a workbook template. For a private deployment, upload or mount your workbook on the server, or keep the deployment internal and commit a sanitized template workbook after removing private data.
+The private source workbook `加油明细.xlsx` is ignored by Git. The repository includes a sanitized fallback template at `templates/加油明细模板.xlsx`, so Zeabur can export Excel files without private workbook data.
+
+If you want to use a private workbook on the server, upload or mount it and set:
+
+```text
+SOURCE_WORKBOOK=/path/to/加油明细.xlsx
+```
 
 ## Required Local Data
 
-The source workbook is intentionally not committed because it may contain private reimbursement data.
+The private source workbook is intentionally not committed because it may contain reimbursement data.
 
-Place your workbook in the project root as:
+For local work, place your workbook in the project root as:
 
 ```text
 加油明细.xlsx
 ```
+
+If it is missing, the app falls back to `templates/加油明细模板.xlsx`.
 
 Generated drafts and exports are also ignored by Git.
 

@@ -25,7 +25,11 @@ FUEL_PRICE_PATH = BASE_DIR / "fuel_prices_changchun_92.csv"
 TRIPS_PATH = BASE_DIR / "vehicle_usage_editor_records.json"
 FUEL_DETAILS_DRAFT_PATH = BASE_DIR / "fuel_details_editor_records.json"
 DESTINATION_POOL_PATH = BASE_DIR / "destination_pool.json"
-SOURCE_WORKBOOK = BASE_DIR / "加油明细.xlsx"
+PRIVATE_WORKBOOK = BASE_DIR / "加油明细.xlsx"
+TEMPLATE_WORKBOOK = BASE_DIR / "templates" / "加油明细模板.xlsx"
+SOURCE_WORKBOOK = Path(os.environ.get("SOURCE_WORKBOOK", PRIVATE_WORKBOOK))
+if not SOURCE_WORKBOOK.exists() and TEMPLATE_WORKBOOK.exists():
+    SOURCE_WORKBOOK = TEMPLATE_WORKBOOK
 DEFAULT_OUTPUT = BASE_DIR / "加油明细_在线编辑器生成.xlsx"
 
 ORIGIN_NAME = "安盟财产保险有限公司长春中心支公司"

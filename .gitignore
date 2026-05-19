@@ -19,6 +19,7 @@ vehicle_usage_destinations.csv
 
 # Local business workbooks and exports
 *.xlsx
+!templates/*.xlsx
 ~$*.xlsx
 
 # Source announcement PDFs downloaded during research
