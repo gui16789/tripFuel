@@ -48,6 +48,27 @@ function money(value) {
   return `${Number(value || 0).toFixed(2)} 元`;
 }
 
+function initTheme() {
+  const savedTheme = localStorage.getItem("theme") || "light";
+  setTheme(savedTheme);
+
+  document.querySelectorAll(".theme-selector .theme-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const themeVal = btn.dataset.themeVal;
+      setTheme(themeVal);
+    });
+  });
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("theme", theme);
+  
+  document.querySelectorAll(".theme-selector .theme-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.themeVal === theme);
+  });
+}
+
 function number2(value) {
   return Number(value || 0).toFixed(2);
 }
@@ -974,6 +995,7 @@ async function refreshFuelPrices() {
 }
 
 async function boot() {
+  initTheme();
   state.config = await api("/api/config", { method: "GET" });
   $("origin").value = state.config.origin;
   $("date").value = "2026-04-08";
