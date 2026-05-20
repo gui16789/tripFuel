@@ -1,8 +1,22 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('fonts/inter-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('fonts/outfit-latin.woff2') format('woff2');
+}
 
 :root, html[data-theme="light"] {
-  --font-heading: 'Outfit', sans-serif;
-  --font-body: 'Inter', sans-serif;
+  --font-heading: 'Outfit', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-body: 'Inter', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', sans-serif;
   
   /* Colors */
   --bg-app: #f5f7fa;
@@ -55,8 +69,8 @@
 }
 
 html[data-theme="dark"] {
-  --font-heading: 'Outfit', sans-serif;
-  --font-body: 'Inter', sans-serif;
+  --font-heading: 'Outfit', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-body: 'Inter', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', sans-serif;
 
   --bg-app: #080c14;
   --bg-body-gradient: radial-gradient(circle at 10% 20%, rgba(13, 148, 136, 0.04) 0%, rgba(8, 12, 20, 1) 90%);
