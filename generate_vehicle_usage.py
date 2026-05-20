@@ -409,16 +409,13 @@ def clear_usage_rows(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
         ws.delete_rows(3, ws.max_row - 2)
 
 
-def write_usage_sheet(
-    workbook_path: Path,
-    output_path: Any,
+def populate_usage_sheet(
+    workbook: openpyxl.Workbook,
+    template_workbook: openpyxl.Workbook,
     trips: list[Trip],
     fuel_rate: float,
 ) -> None:
-    workbook = openpyxl.load_workbook(workbook_path)
     ws = workbook["车辆使用明细表"]
-
-    template_workbook = openpyxl.load_workbook(workbook_path)
     template_ws = template_workbook["车辆使用明细表"]
 
     clear_usage_rows(ws)
@@ -451,6 +448,17 @@ def write_usage_sheet(
     for column in range(1, 10):
         ws.cell(total_row, column).font = copy(template_ws.cell(45, column).font) if template_ws.max_row >= 45 else Font(bold=True)
         ws.cell(total_row, column).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+def write_usage_sheet(
+    workbook_path: Path,
+    output_path: Any,
+    trips: list[Trip],
+    fuel_rate: float,
+) -> None:
+    workbook = openpyxl.load_workbook(workbook_path)
+    template_workbook = openpyxl.load_workbook(workbook_path)
+    populate_usage_sheet(workbook, template_workbook, trips, fuel_rate)
 
     if isinstance(output_path, (str, Path)):
         output_path = Path(output_path)

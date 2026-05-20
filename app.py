@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from generate_vehicle_usage import Trip, write_usage_sheet
+from generate_vehicle_usage import Trip, populate_usage_sheet, write_usage_sheet
 from oil_price_fetcher import merge_and_save_prices, scrape_jilin_prices
 
 
@@ -57,6 +57,12 @@ class FuelPriceRefreshRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     records: list[dict[str, Any]]
+    output_name: str | None = None
+
+
+class CombinedExportRequest(BaseModel):
+    records: list[dict[str, Any]]
+    fuel_details: list[dict[str, Any]]
     output_name: str | None = None
 
 
@@ -232,8 +238,7 @@ def read_fuel_details_from_workbook(workbook_source: Any | None = None) -> list[
     return rows
 
 
-def write_fuel_details(output_target: Any, rows: list[dict[str, Any]], workbook_path: Path | None = None) -> None:
-    workbook = openpyxl.load_workbook(workbook_path or active_workbook_path())
+def populate_fuel_details_sheet(workbook: openpyxl.Workbook, rows: list[dict[str, Any]]) -> None:
     ws = workbook["加油明细"]
 
     for merged in list(ws.merged_cells.ranges):
@@ -258,12 +263,30 @@ def write_fuel_details(output_target: Any, rows: list[dict[str, Any]], workbook_
     ws.cell(total_row, 4, f"=SUM(D3:D{total_row - 1})" if rows else 0)
     ws.cell(total_row, 5, f"=SUM(E3:E{total_row - 1})" if rows else 0)
 
+
+def write_fuel_details(output_target: Any, rows: list[dict[str, Any]], workbook_path: Path | None = None) -> None:
+    workbook = openpyxl.load_workbook(workbook_path or active_workbook_path())
+    populate_fuel_details_sheet(workbook, rows)
+
     if isinstance(output_target, (str, Path)):
         output_path = Path(output_target)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         workbook.save(output_path)
     else:
         workbook.save(output_target)
+
+
+def trips_from_records(records: list[dict[str, Any]]) -> list[Trip]:
+    return [
+        Trip(
+            date=datetime.strptime(item["date"], "%Y-%m-%d"),
+            origin=item.get("origin") or ORIGIN_NAME,
+            destination=item.get("poi_name") or item.get("destination") or "",
+            fuel_price=float(item["fuel_price"]),
+            distance_km=float(item["distance_km"]),
+        )
+        for item in records
+    ]
 
 
 def default_destination_pool() -> list[dict[str, Any]]:
@@ -520,21 +543,28 @@ def export(payload: ExportRequest) -> StreamingResponse:
     if not payload.records:
         raise HTTPException(status_code=400, detail="没有可导出的明细记录。")
 
-    trips = []
-    for item in payload.records:
-        trips.append(
-            Trip(
-                date=datetime.strptime(item["date"], "%Y-%m-%d"),
-                origin=item.get("origin") or ORIGIN_NAME,
-                destination=item.get("poi_name") or item.get("destination") or "",
-                fuel_price=float(item["fuel_price"]),
-                distance_km=float(item["distance_km"]),
-            )
-        )
+    trips = trips_from_records(payload.records)
 
     output_name = payload.output_name or f"加油明细_在线编辑器生成_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
     stream = BytesIO()
     write_usage_sheet(active_workbook_path(), stream, trips, FUEL_RATE)
+    return excel_download_response(stream, output_name)
+
+
+@app.post("/api/export/full")
+def export_full(payload: CombinedExportRequest) -> StreamingResponse:
+    if not payload.records and not payload.fuel_details:
+        raise HTTPException(status_code=400, detail="没有可导出的车辆使用明细或加油明细。")
+
+    workbook_path = active_workbook_path()
+    workbook = openpyxl.load_workbook(workbook_path)
+    template_workbook = openpyxl.load_workbook(workbook_path)
+    populate_usage_sheet(workbook, template_workbook, trips_from_records(payload.records), FUEL_RATE)
+    populate_fuel_details_sheet(workbook, payload.fuel_details)
+
+    output_name = payload.output_name or f"行程燃油完整备份_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    stream = BytesIO()
+    workbook.save(stream)
     return excel_download_response(stream, output_name)
 
 

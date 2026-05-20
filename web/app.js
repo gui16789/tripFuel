@@ -48,6 +48,26 @@ function money(value) {
   return `${Number(value || 0).toFixed(2)} 元`;
 }
 
+async function downloadWorkbook(response, fallbackName) {
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "导出失败");
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
+  const filename = match ? decodeURIComponent(match[1] || match[2]) : fallbackName;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return filename;
+}
+
 function initTheme() {
   const savedTheme = localStorage.getItem("theme") || "light";
   setTheme(savedTheme);
@@ -516,25 +536,39 @@ async function exportFuelDetails() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rows: state.fuelDetails }),
     });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.detail || "导出失败");
-    }
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
-    const filename = match ? decodeURIComponent(match[1] || match[2]) : "加油明细_维护导出.xlsx";
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    const filename = await downloadWorkbook(response, "加油明细_维护导出.xlsx");
     setStatus(`已导出加油明细 Excel：${filename}`);
   } catch (error) {
     setStatus(error.message, true);
+  }
+}
+
+async function exportFullExcel() {
+  state.fuelDetails = collectFuelDetails();
+  if (!state.records.length && !state.fuelDetails.length) {
+    const message = "没有可导出的车辆使用明细或加油明细。";
+    setStatus(message, true);
+    setFuelStatus(message, true);
+    return;
+  }
+  try {
+    const response = await fetch("/api/export/full", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...amapHeaders(),
+      },
+      body: JSON.stringify({
+        records: state.records,
+        fuel_details: state.fuelDetails,
+      }),
+    });
+    const filename = await downloadWorkbook(response, "行程燃油完整备份.xlsx");
+    setStatus(`已导出完整 Excel：${filename}`);
+    setFuelStatus(`已导出完整 Excel：${filename}`);
+  } catch (error) {
+    setStatus(error.message, true);
+    setFuelStatus(error.message, true);
   }
 }
 
@@ -957,22 +991,7 @@ async function exportExcel() {
       },
       body: JSON.stringify({ records: state.records }),
     });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.detail || "导出失败");
-    }
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
-    const filename = match ? decodeURIComponent(match[1] || match[2]) : "加油明细_在线编辑器生成.xlsx";
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    const filename = await downloadWorkbook(response, "加油明细_在线编辑器生成.xlsx");
     setStatus(`已导出 Excel：${filename}`);
   } catch (error) {
     setStatus(error.message, true);
@@ -1031,6 +1050,7 @@ $("addWaypointBtn").addEventListener("click", toggleWaypointMode);
 $("clearRouteBtn").addEventListener("click", resetCurrentRouteInput);
 $("saveBtn").addEventListener("click", saveRecords);
 $("exportBtn").addEventListener("click", exportExcel);
+$("exportFullBtn").addEventListener("click", exportFullExcel);
 $("refreshFuelBtn").addEventListener("click", refreshFuelPrices);
 $("autoGenerateBtn").addEventListener("click", openAutoGenerateModal);
 $("closeAutoGenerateBtn").addEventListener("click", closeAutoGenerateModal);
@@ -1045,6 +1065,7 @@ $("reloadFuelDetailsBtn").addEventListener("click", () => $("fuelWorkbookInput")
 $("fuelWorkbookInput").addEventListener("change", uploadFuelDetailsWorkbook);
 $("saveFuelDetailsBtn").addEventListener("click", saveFuelDetailsDraft);
 $("exportFuelDetailsBtn").addEventListener("click", exportFuelDetails);
+$("exportFullFuelBtn").addEventListener("click", exportFullExcel);
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
