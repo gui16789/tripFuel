@@ -7,12 +7,13 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 import uvicorn
 import openpyxl
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -95,6 +96,19 @@ def workbook_payload(rows: list[dict[str, Any]], source: str, workbook_path: Pat
         "workbook": str(workbook_path),
         "is_template": is_template_workbook(workbook_path),
     }
+
+
+def excel_download_response(stream: BytesIO, filename: str) -> StreamingResponse:
+    stream.seek(0)
+    safe_filename = Path(filename).name
+    if not safe_filename.lower().endswith(".xlsx"):
+        safe_filename = f"{safe_filename}.xlsx"
+    quoted = quote(safe_filename)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
+    )
 
 
 def amap_key(x_amap_key: str | None = Header(default=None)) -> str:
@@ -218,7 +232,7 @@ def read_fuel_details_from_workbook(workbook_source: Any | None = None) -> list[
     return rows
 
 
-def write_fuel_details(output_path: Path, rows: list[dict[str, Any]], workbook_path: Path | None = None) -> None:
+def write_fuel_details(output_target: Any, rows: list[dict[str, Any]], workbook_path: Path | None = None) -> None:
     workbook = openpyxl.load_workbook(workbook_path or active_workbook_path())
     ws = workbook["加油明细"]
 
@@ -244,8 +258,12 @@ def write_fuel_details(output_path: Path, rows: list[dict[str, Any]], workbook_p
     ws.cell(total_row, 4, f"=SUM(D3:D{total_row - 1})" if rows else 0)
     ws.cell(total_row, 5, f"=SUM(E3:E{total_row - 1})" if rows else 0)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
+    if isinstance(output_target, (str, Path)):
+        output_path = Path(output_target)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(output_path)
+    else:
+        workbook.save(output_target)
 
 
 def default_destination_pool() -> list[dict[str, Any]]:
@@ -479,17 +497,11 @@ def save_fuel_details_draft(payload: FuelDetailsRequest) -> dict[str, Any]:
 
 
 @app.post("/api/fuel-details/export")
-def export_fuel_details(payload: FuelDetailsRequest) -> FileResponse:
+def export_fuel_details(payload: FuelDetailsRequest) -> StreamingResponse:
     output_name = payload.output_name or f"加油明细_维护导出_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
-    output_path = BASE_DIR / output_name
-    if output_path.suffix.lower() != ".xlsx":
-        output_path = output_path.with_suffix(".xlsx")
-    write_fuel_details(output_path, payload.rows, active_workbook_path())
-    return FileResponse(
-        output_path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=output_path.name,
-    )
+    stream = BytesIO()
+    write_fuel_details(stream, payload.rows, active_workbook_path())
+    return excel_download_response(stream, output_name)
 
 
 @app.get("/api/destination-pool")
@@ -504,7 +516,7 @@ def update_destination_pool(payload: DestinationPoolRequest) -> dict[str, Any]:
 
 
 @app.post("/api/export")
-def export(payload: ExportRequest) -> FileResponse:
+def export(payload: ExportRequest) -> StreamingResponse:
     if not payload.records:
         raise HTTPException(status_code=400, detail="没有可导出的明细记录。")
 
@@ -521,15 +533,9 @@ def export(payload: ExportRequest) -> FileResponse:
         )
 
     output_name = payload.output_name or f"加油明细_在线编辑器生成_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
-    output_path = BASE_DIR / output_name
-    if output_path.suffix.lower() != ".xlsx":
-        output_path = output_path.with_suffix(".xlsx")
-    write_usage_sheet(active_workbook_path(), output_path, trips, FUEL_RATE)
-    return FileResponse(
-        output_path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=output_path.name,
-    )
+    stream = BytesIO()
+    write_usage_sheet(active_workbook_path(), stream, trips, FUEL_RATE)
+    return excel_download_response(stream, output_name)
 
 
 app.mount("/web", StaticFiles(directory=WEB_DIR), name="web")

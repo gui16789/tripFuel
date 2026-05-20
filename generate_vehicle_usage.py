@@ -411,7 +411,7 @@ def clear_usage_rows(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
 
 def write_usage_sheet(
     workbook_path: Path,
-    output_path: Path,
+    output_path: Any,
     trips: list[Trip],
     fuel_rate: float,
 ) -> None:
@@ -452,8 +452,12 @@ def write_usage_sheet(
         ws.cell(total_row, column).font = copy(template_ws.cell(45, column).font) if template_ws.max_row >= 45 else Font(bold=True)
         ws.cell(total_row, column).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
+    if isinstance(output_path, (str, Path)):
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(output_path)
+    else:
+        workbook.save(output_path)
 
 
 def print_summary(trips: list[Trip], fuel_rate: float) -> None:
