@@ -478,31 +478,33 @@ async function loadFuelDetails(source = "draft") {
   }
 }
 
-async function uploadFuelDetailsWorkbook() {
+async function importFullWorkbook() {
   const input = $("fuelWorkbookInput");
   const file = input.files?.[0];
   if (!file) return;
-  setFuelStatus(`正在上传并读取 ${file.name} ...`);
-  setStatus("正在上传并读取 Excel...");
+  setFuelStatus(`正在导入 ${file.name} ...`);
+  setStatus("正在导入完整 Excel...");
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch("/api/fuel-details/upload", {
+    const response = await fetch("/api/import/full", {
       method: "POST",
       body: formData,
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data.detail || "上传读取失败");
+      throw new Error(data.detail || "导入失败");
     }
-    state.fuelDetails = data.rows || [];
+    state.records = data.records || [];
+    state.fuelDetails = data.fuel_details || [];
+    renderRecords();
     renderFuelDetails();
-    let message = `已从上传 Excel 读取 ${state.fuelDetails.length} 条加油明细。`;
-    if (!state.fuelDetails.length) {
-      message = "上传成功，但“加油明细”sheet 第3行起没有读取到有效记录。";
+    let message = `已导入 ${state.records.length} 条车辆使用明细、${state.fuelDetails.length} 条加油明细。`;
+    if (!state.records.length && !state.fuelDetails.length) {
+      message = "上传成功，但没有从“车辆使用明细表”和“加油明细”sheet 读取到有效记录。";
     }
-    setFuelStatus(message, !state.fuelDetails.length);
-    setStatus(message, !state.fuelDetails.length);
+    setFuelStatus(message, !state.records.length && !state.fuelDetails.length);
+    setStatus(message, !state.records.length && !state.fuelDetails.length);
   } catch (error) {
     setFuelStatus(error.message, true);
     setStatus(error.message, true);
@@ -1050,6 +1052,7 @@ $("addWaypointBtn").addEventListener("click", toggleWaypointMode);
 $("clearRouteBtn").addEventListener("click", resetCurrentRouteInput);
 $("saveBtn").addEventListener("click", saveRecords);
 $("exportBtn").addEventListener("click", exportExcel);
+$("importFullBtn").addEventListener("click", () => $("fuelWorkbookInput").click());
 $("exportFullBtn").addEventListener("click", exportFullExcel);
 $("refreshFuelBtn").addEventListener("click", refreshFuelPrices);
 $("autoGenerateBtn").addEventListener("click", openAutoGenerateModal);
@@ -1062,7 +1065,7 @@ $("poolKeyword").addEventListener("keydown", (event) => {
 $("saveDestinationPoolBtn").addEventListener("click", saveDestinationPool);
 $("addFuelDetailBtn").addEventListener("click", addFuelDetailRow);
 $("reloadFuelDetailsBtn").addEventListener("click", () => $("fuelWorkbookInput").click());
-$("fuelWorkbookInput").addEventListener("change", uploadFuelDetailsWorkbook);
+$("fuelWorkbookInput").addEventListener("change", importFullWorkbook);
 $("saveFuelDetailsBtn").addEventListener("click", saveFuelDetailsDraft);
 $("exportFuelDetailsBtn").addEventListener("click", exportFuelDetails);
 $("exportFullFuelBtn").addEventListener("click", exportFullExcel);

@@ -3,7 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import os
-from datetime import datetime
+import re
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,36 @@ def excel_download_response(stream: BytesIO, filename: str) -> StreamingResponse
     )
 
 
+def parse_excel_date(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "合计":
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y年%m月%d日", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def parse_excel_float(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if value is None:
+        return 0.0
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return 0.0
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return float(match.group(0)) if match else 0.0
+
+
 def amap_key(x_amap_key: str | None = Header(default=None)) -> str:
     key = x_amap_key or os.environ.get("AMAP_KEY", "")
     if not key:
@@ -224,18 +255,55 @@ def read_fuel_details_from_workbook(workbook_source: Any | None = None) -> list[
             break
         if not any(value is not None for value in [date, vehicle, driver, amount, liters]):
             continue
-        if not isinstance(date, datetime):
+        parsed_date = parse_excel_date(date)
+        if not parsed_date:
             continue
         rows.append(
             {
-                "date": date.strftime("%Y-%m-%d"),
+                "date": parsed_date,
                 "vehicle": vehicle or "",
                 "driver": driver or "",
-                "amount": float(amount or 0),
-                "liters": float(liters or 0),
+                "amount": parse_excel_float(amount),
+                "liters": parse_excel_float(liters),
             }
         )
     return rows
+
+
+def read_usage_records_from_workbook(workbook_source: Any) -> list[dict[str, Any]]:
+    workbook = openpyxl.load_workbook(workbook_source, data_only=True)
+    ws = workbook["车辆使用明细表"]
+    records: list[dict[str, Any]] = []
+
+    for row in range(3, ws.max_row + 1):
+        serial_no = ws.cell(row, 1).value
+        if str(serial_no).strip() == "合计":
+            break
+
+        parsed_date = parse_excel_date(ws.cell(row, 2).value)
+        origin = ws.cell(row, 3).value
+        destination = ws.cell(row, 4).value
+        distance_km = parse_excel_float(ws.cell(row, 5).value)
+        fuel_price = parse_excel_float(ws.cell(row, 7).value)
+        if not parsed_date or not destination:
+            continue
+
+        display_name = str(destination).strip()
+        records.append(
+            {
+                "date": parsed_date,
+                "origin": origin or ORIGIN_NAME,
+                "destination": display_name,
+                "poi_name": display_name,
+                "poi_address": "",
+                "poi_location": "",
+                "stops": [],
+                "distance_km": distance_km,
+                "distance_km_exact": distance_km,
+                "fuel_price": fuel_price,
+            }
+        )
+    return records
 
 
 def populate_fuel_details_sheet(workbook: openpyxl.Workbook, rows: list[dict[str, Any]]) -> None:
@@ -505,6 +573,41 @@ async def upload_fuel_details_workbook(file: UploadFile = File(...)) -> dict[str
             "source": "upload",
             "workbook": filename,
             "is_template": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取上传的 Excel：{exc}") from exc
+
+
+@app.post("/api/import/full")
+async def import_full_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的 Excel 文件。")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="上传文件为空。")
+
+    try:
+        workbook = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+        missing = {"车辆使用明细表", "加油明细"} - set(workbook.sheetnames)
+        workbook.close()
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Excel 缺少必要 sheet：{', '.join(sorted(missing))}")
+
+        records = read_usage_records_from_workbook(BytesIO(content))
+        fuel_rows = read_fuel_details_from_workbook(BytesIO(content))
+        TRIPS_PATH.write_text(json.dumps({"records": records}, ensure_ascii=False, indent=2), encoding="utf-8")
+        FUEL_DETAILS_DRAFT_PATH.write_text(json.dumps({"rows": fuel_rows}, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {
+            "records": records,
+            "fuel_details": fuel_rows,
+            "source": "upload",
+            "workbook": filename,
+            "is_template": False,
+            "saved": True,
         }
     except HTTPException:
         raise
