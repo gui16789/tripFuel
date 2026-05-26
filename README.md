@@ -96,6 +96,8 @@ The private source workbook `加油明细.xlsx` is ignored by Git. The repositor
 
 Users can upload their own workbook from the **加油明细维护** tab. The server only imports rows from the uploaded workbook's `加油明细` sheet. Uploading a workbook does not replace the system Excel template.
 
+Goal mode calls AMap POI and driving-route APIs to build a city-limited destination set. On Zeabur the first request has no local AMap cache, so it is intentionally capped with shorter AMap request timeouts, a candidate limit, a route-check limit, and an overall generation deadline. If `/api/generate/goal` still returns slowly, check the Zeabur service logs for `goal generation started`, `goal candidates ready`, and `goal generation finished`; then reduce keywords or raise the limits only after confirming the AMap key and network are healthy.
+
 If you want to use a private workbook on the server without uploading it from the page, mount it and set:
 
 ```text

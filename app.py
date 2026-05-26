@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import re
+import time
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
@@ -51,6 +53,8 @@ AMAP_BASE = "https://restapi.amap.com/v3"
 
 
 app = FastAPI(title="车辆使用明细表编辑器")
+logger = logging.getLogger("tripfuel.goal")
+logger.setLevel(logging.INFO)
 
 
 class PoiSearchRequest(BaseModel):
@@ -104,7 +108,11 @@ class GoalGenerateRequest(BaseModel):
     amount_tolerance: float = 25.0
     skip_weekends: bool = True
     max_trips_per_day: int = 1
-    per_keyword: int = 20
+    per_keyword: int = 8
+    max_candidates: int = 60
+    max_route_checks: int = 70
+    request_timeout_seconds: float = 8.0
+    generate_timeout_seconds: float = 45.0
     min_km: int = 20
     max_km: int = 260
     recent_cooldown: int = 10
@@ -691,6 +699,16 @@ def generate_goal(payload: GoalGenerateRequest, x_amap_key: str | None = Header(
         raise HTTPException(status_code=400, detail="油耗必须大于 0。")
     if payload.max_trips_per_day < 1:
         raise HTTPException(status_code=400, detail="每日最多行程必须至少为 1。")
+    if payload.per_keyword < 1 or payload.per_keyword > 25:
+        raise HTTPException(status_code=400, detail="每个关键词候选数需要在 1 到 25 之间。")
+    if payload.max_candidates < 10 or payload.max_candidates > 300:
+        raise HTTPException(status_code=400, detail="候选目的地上限需要在 10 到 300 之间。")
+    if payload.max_route_checks < 10 or payload.max_route_checks > 500:
+        raise HTTPException(status_code=400, detail="路线试算上限需要在 10 到 500 之间。")
+    if payload.request_timeout_seconds < 2 or payload.request_timeout_seconds > 20:
+        raise HTTPException(status_code=400, detail="高德单次请求超时需要在 2 到 20 秒之间。")
+    if payload.generate_timeout_seconds < 10 or payload.generate_timeout_seconds > 90:
+        raise HTTPException(status_code=400, detail="生成超时需要在 10 到 90 秒之间。")
     if payload.tank_capacity_liters <= 0:
         raise HTTPException(status_code=400, detail="油箱容量必须大于 0。")
     if not 0 <= payload.initial_fuel_percent <= 100:
@@ -713,6 +731,8 @@ def generate_goal(payload: GoalGenerateRequest, x_amap_key: str | None = Header(
         raise HTTPException(status_code=400, detail="结束日期不能早于开始日期。")
 
     try:
+        request_started = time.monotonic()
+        deadline = request_started + payload.generate_timeout_seconds
         prices = read_fuel_price_tuples(FUEL_PRICE_PATH)
         available_days = workdays(start, end, payload.skip_weekends)
         if not available_days:
@@ -727,7 +747,20 @@ def generate_goal(payload: GoalGenerateRequest, x_amap_key: str | None = Header(
             payload.target_amount - reserve_delta_liters * average_price,
         )
 
-        client = AmapPocClient(key, payload.city, BASE_DIR / ".goal_reconstruction_cache.json")
+        logger.info(
+            "goal generation started target=%.2f days=%s per_keyword=%s max_candidates=%s max_route_checks=%s",
+            payload.target_amount,
+            len(available_days),
+            payload.per_keyword,
+            payload.max_candidates,
+            payload.max_route_checks,
+        )
+        client = AmapPocClient(
+            key,
+            payload.city,
+            BASE_DIR / ".goal_reconstruction_cache.json",
+            request_timeout=payload.request_timeout_seconds,
+        )
         try:
             candidates = collect_candidates(
                 client=client,
@@ -737,9 +770,19 @@ def generate_goal(payload: GoalGenerateRequest, x_amap_key: str | None = Header(
                 min_km=payload.min_km,
                 max_km=payload.max_km,
                 allowed_city=payload.allowed_city,
+                max_candidates=payload.max_candidates,
+                max_route_checks=payload.max_route_checks,
+                deadline_monotonic=deadline,
             )
         finally:
             client.save()
+        if not candidates:
+            raise ValueError("没有获取到可用候选目的地，请降低最小里程、增加生成超时或检查高德 Key。")
+        logger.info(
+            "goal candidates ready count=%s elapsed=%.1fs",
+            len(candidates),
+            time.monotonic() - request_started,
+        )
 
         drafts = build_drafts(
             candidates=candidates,
@@ -780,6 +823,12 @@ def generate_goal(payload: GoalGenerateRequest, x_amap_key: str | None = Header(
                 f"燃油余额校验未通过：最低余额 {fuel_balance['min_balance_liters']}L，"
                 f"要求不低于 {fuel_balance['minimum_required_liters']}L。"
             )
+        logger.info(
+            "goal generation finished trips=%s fuel_details=%s elapsed=%.1fs",
+            len(drafts),
+            len(fuel_details),
+            time.monotonic() - request_started,
+        )
     except HTTPException:
         raise
     except Exception as exc:

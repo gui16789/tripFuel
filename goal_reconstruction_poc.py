@@ -91,11 +91,19 @@ class FuelDetail:
 
 
 class AmapPocClient:
-    def __init__(self, key: str, city: str, cache_path: Path, sleep_seconds: float = 0.12) -> None:
+    def __init__(
+        self,
+        key: str,
+        city: str,
+        cache_path: Path,
+        sleep_seconds: float = 0.12,
+        request_timeout: float = 10.0,
+    ) -> None:
         self.key = key
         self.city = city
         self.cache_path = cache_path
         self.sleep_seconds = sleep_seconds
+        self.request_timeout = request_timeout
         self.cache: dict[str, Any] = {}
         if cache_path.exists():
             self.cache = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -106,7 +114,7 @@ class AmapPocClient:
     def get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         params = {"key": self.key, "output": "JSON", **params}
         url = f"{AMAP_BASE}/{path}?{urlencode(params)}"
-        with urlopen(url, timeout=25) as response:
+        with urlopen(url, timeout=self.request_timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
         if str(data.get("status")) != "1":
             raise RuntimeError(f"AMap request failed: {data.get('info') or data}")
@@ -224,11 +232,30 @@ def collect_candidates(
     min_km: int,
     max_km: int,
     allowed_city: str,
+    max_candidates: int | None = None,
+    max_route_checks: int | None = None,
+    deadline_monotonic: float | None = None,
 ) -> list[Candidate]:
     origin_location = client.geocode(origin)
     by_location: dict[str, Candidate] = {}
+    route_checks = 0
+
+    def sorted_candidates() -> list[Candidate]:
+        return sorted(by_location.values(), key=lambda item: item.distance_km)
+
+    def should_stop() -> bool:
+        if max_candidates is not None and len(by_location) >= max_candidates:
+            return True
+        if max_route_checks is not None and route_checks >= max_route_checks:
+            return True
+        return deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+
     for keyword in keywords:
+        if should_stop():
+            break
         for poi in client.search_pois(keyword, per_keyword):
+            if should_stop():
+                break
             location = poi.get("location")
             if not location or location in by_location:
                 continue
@@ -236,6 +263,7 @@ def collect_candidates(
             if allowed_city and city != allowed_city:
                 continue
             try:
+                route_checks += 1
                 distance_m, duration_min = client.driving_distance(origin_location, str(location))
             except Exception:
                 continue
@@ -254,7 +282,7 @@ def collect_candidates(
                 distance_km=distance_km,
                 duration_min=duration_min,
             )
-    return sorted(by_location.values(), key=lambda item: item.distance_km)
+    return sorted_candidates()
 
 
 def build_drafts(
