@@ -18,7 +18,18 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from generate_vehicle_usage import Trip, populate_usage_sheet, write_usage_sheet
+from generate_vehicle_usage import Trip, populate_usage_sheet, read_fuel_prices as read_fuel_price_tuples, write_usage_sheet
+from goal_reconstruction_poc import (
+    DEFAULT_KEYWORDS,
+    AmapPocClient,
+    build_drafts,
+    build_fuel_balance_report,
+    build_realistic_fuel_details,
+    collect_candidates,
+    parse_keywords,
+    price_for_date as goal_price_for_date,
+    workdays,
+)
 from oil_price_fetcher import merge_and_save_prices, scrape_jilin_prices
 
 
@@ -78,6 +89,36 @@ class FuelDetailsRequest(BaseModel):
 
 class DestinationPoolRequest(BaseModel):
     destinations: list[dict[str, Any]]
+
+
+class GoalGenerateRequest(BaseModel):
+    target_amount: float
+    start_date: str
+    end_date: str
+    vehicle: str = "吉AKC166"
+    driver: str = "李博"
+    city: str = CITY
+    allowed_city: str = "长春市"
+    origin: str = ORIGIN_NAME
+    fuel_rate: float = FUEL_RATE
+    amount_tolerance: float = 25.0
+    skip_weekends: bool = True
+    max_trips_per_day: int = 1
+    per_keyword: int = 20
+    min_km: int = 20
+    max_km: int = 260
+    recent_cooldown: int = 10
+    max_same_destination: int = 2
+    tank_capacity_liters: float = 50.0
+    initial_fuel_percent: float = 10.0
+    minimum_fuel_percent: float = 10.0
+    final_fuel_percent: float = 20.0
+    min_refuel_amount: float = 150.0
+    max_refuel_amount: float = 280.0
+    preferred_refuel_amount: float = 260.0
+    max_refuel_liters: float = 42.0
+    keywords: str = ",".join(DEFAULT_KEYWORDS)
+    seed: int = 20260526
 
 
 def active_workbook_path() -> Path:
@@ -639,6 +680,198 @@ def destination_pool() -> dict[str, Any]:
 def update_destination_pool(payload: DestinationPoolRequest) -> dict[str, Any]:
     save_destination_pool(payload.destinations)
     return {"saved": True, "count": len(payload.destinations)}
+
+
+@app.post("/api/generate/goal")
+def generate_goal(payload: GoalGenerateRequest, x_amap_key: str | None = Header(default=None)) -> dict[str, Any]:
+    key = amap_key(x_amap_key)
+    if payload.target_amount <= 0:
+        raise HTTPException(status_code=400, detail="目标金额必须大于 0。")
+    if payload.fuel_rate <= 0:
+        raise HTTPException(status_code=400, detail="油耗必须大于 0。")
+    if payload.max_trips_per_day < 1:
+        raise HTTPException(status_code=400, detail="每日最多行程必须至少为 1。")
+    if payload.tank_capacity_liters <= 0:
+        raise HTTPException(status_code=400, detail="油箱容量必须大于 0。")
+    if not 0 <= payload.initial_fuel_percent <= 100:
+        raise HTTPException(status_code=400, detail="初始油量比例需要在 0 到 100 之间。")
+    if not 0 <= payload.minimum_fuel_percent <= 100:
+        raise HTTPException(status_code=400, detail="最低油量比例需要在 0 到 100 之间。")
+    if not 0 <= payload.final_fuel_percent <= 100:
+        raise HTTPException(status_code=400, detail="期末油量比例需要在 0 到 100 之间。")
+    if payload.min_refuel_amount <= 0 or payload.max_refuel_amount <= 0:
+        raise HTTPException(status_code=400, detail="单次加油金额上下限必须大于 0。")
+    if payload.min_refuel_amount > payload.max_refuel_amount:
+        raise HTTPException(status_code=400, detail="单次加油金额下限不能大于上限。")
+
+    try:
+        start = datetime.strptime(payload.start_date, "%Y-%m-%d")
+        end = datetime.strptime(payload.end_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="起止日期格式需要是 YYYY-MM-DD。") from exc
+    if end < start:
+        raise HTTPException(status_code=400, detail="结束日期不能早于开始日期。")
+
+    try:
+        prices = read_fuel_price_tuples(FUEL_PRICE_PATH)
+        available_days = workdays(start, end, payload.skip_weekends)
+        if not available_days:
+            raise ValueError("日期范围内没有可用行程日期。")
+        average_price = sum(goal_price_for_date(prices, day) for day in available_days) / len(available_days)
+        initial_fuel_liters = payload.tank_capacity_liters * payload.initial_fuel_percent / 100
+        minimum_balance_liters = payload.tank_capacity_liters * payload.minimum_fuel_percent / 100
+        final_balance_liters = payload.tank_capacity_liters * payload.final_fuel_percent / 100
+        reserve_delta_liters = max(0.0, final_balance_liters - initial_fuel_liters)
+        trip_target_amount = max(
+            payload.min_refuel_amount,
+            payload.target_amount - reserve_delta_liters * average_price,
+        )
+
+        client = AmapPocClient(key, payload.city, BASE_DIR / ".goal_reconstruction_cache.json")
+        try:
+            candidates = collect_candidates(
+                client=client,
+                origin=payload.origin,
+                keywords=parse_keywords(payload.keywords),
+                per_keyword=payload.per_keyword,
+                min_km=payload.min_km,
+                max_km=payload.max_km,
+                allowed_city=payload.allowed_city,
+            )
+        finally:
+            client.save()
+
+        drafts = build_drafts(
+            candidates=candidates,
+            days=available_days,
+            prices=prices,
+            target_amount=trip_target_amount,
+            fuel_rate=payload.fuel_rate,
+            max_trips_per_day=payload.max_trips_per_day,
+            amount_tolerance=payload.amount_tolerance,
+            recent_cooldown=payload.recent_cooldown,
+            max_same_destination=payload.max_same_destination,
+            seed=payload.seed,
+        )
+        fuel_details = build_realistic_fuel_details(
+            rows=drafts,
+            prices=prices,
+            target_amount=payload.target_amount,
+            vehicle=payload.vehicle,
+            driver=payload.driver,
+            tank_capacity_liters=payload.tank_capacity_liters,
+            initial_fuel_liters=initial_fuel_liters,
+            minimum_balance_liters=minimum_balance_liters,
+            final_balance_liters=final_balance_liters,
+            min_refuel_amount=payload.min_refuel_amount,
+            max_refuel_amount=payload.max_refuel_amount,
+            preferred_refuel_amount=payload.preferred_refuel_amount,
+            max_refuel_liters=payload.max_refuel_liters,
+        )
+        fuel_balance = build_fuel_balance_report(
+            drafts,
+            fuel_details,
+            initial_fuel_liters=initial_fuel_liters,
+            minimum_balance_liters=minimum_balance_liters,
+            tank_capacity_liters=payload.tank_capacity_liters,
+        )
+        if not fuel_balance["is_valid"]:
+            raise ValueError(
+                f"燃油余额校验未通过：最低余额 {fuel_balance['min_balance_liters']}L，"
+                f"要求不低于 {fuel_balance['minimum_required_liters']}L。"
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"倒推生成失败：{exc}") from exc
+
+    total_km = sum(row.distance_km for row in drafts)
+    total_liters = sum(row.liters for row in drafts)
+    total_amount = sum(row.amount for row in drafts)
+    fuel_total_amount = sum(row.amount for row in fuel_details)
+    fuel_total_liters = sum(row.liters for row in fuel_details)
+    monthly: dict[str, dict[str, Any]] = {}
+    destination_counts: dict[str, int] = {}
+    for row in drafts:
+        month = row.date.strftime("%Y-%m")
+        item = monthly.setdefault(month, {"month": month, "count": 0, "km": 0, "liters": 0, "amount": 0})
+        item["count"] += 1
+        item["km"] += row.distance_km
+        item["liters"] += row.liters
+        item["amount"] += row.amount
+        destination_counts[row.destination] = destination_counts.get(row.destination, 0) + 1
+
+    records = [
+        {
+            "date": row.date.strftime("%Y-%m-%d"),
+            "origin": payload.origin,
+            "destination": row.destination,
+            "poi_name": row.poi_name,
+            "poi_address": row.address,
+            "poi_location": "",
+            "stops": [],
+            "distance_km": row.distance_km,
+            "distance_km_exact": row.distance_km,
+            "fuel_price": round(row.fuel_price, 2),
+            "source": "goal_generated",
+            "status": "待人工核验",
+            "district": row.district,
+            "city": row.city,
+        }
+        for row in drafts
+    ]
+    fuel_rows = [
+        {
+            "date": row.date.strftime("%Y-%m-%d"),
+            "vehicle": row.vehicle,
+            "driver": row.driver,
+            "amount": round(row.amount, 2),
+            "liters": round(row.liters, 2),
+            "source": "goal_generated",
+            "status": "待人工核验",
+        }
+        for row in fuel_details
+    ]
+
+    return {
+        "summary": {
+            "target_amount": round(payload.target_amount, 2),
+            "generated_amount": round(fuel_total_amount, 2),
+            "difference": round(fuel_total_amount - payload.target_amount, 2),
+            "trip_amount": round(total_amount, 2),
+            "generated_km": round(total_km, 2),
+            "generated_liters": round(total_liters, 2),
+            "fuel_detail_liters": round(fuel_total_liters, 2),
+            "trip_count": len(records),
+            "fuel_detail_count": len(fuel_rows),
+            "candidate_count": len(candidates),
+            "fuel_balance_liters": fuel_balance["final_balance_liters"],
+            "min_fuel_balance_liters": fuel_balance["min_balance_liters"],
+            "fuel_balance_valid": fuel_balance["is_valid"],
+            "tank_capacity_liters": payload.tank_capacity_liters,
+            "minimum_required_liters": round(minimum_balance_liters, 2),
+            "fuel_rate": payload.fuel_rate,
+            "status": "待人工核验",
+        },
+        "monthly": [
+            {
+                "month": item["month"],
+                "count": item["count"],
+                "km": round(item["km"], 2),
+                "liters": round(item["liters"], 2),
+                "amount": round(item["amount"], 2),
+            }
+            for item in sorted(monthly.values(), key=lambda value: value["month"])
+        ],
+        "diagnostics": {
+            "top_destinations": sorted(destination_counts.items(), key=lambda item: item[1], reverse=True)[:10],
+            "allowed_city": payload.allowed_city,
+            "keywords": parse_keywords(payload.keywords),
+        },
+        "fuel_balance": fuel_balance,
+        "records": records,
+        "fuel_details": fuel_rows,
+    }
 
 
 @app.post("/api/export")

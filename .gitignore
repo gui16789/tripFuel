@@ -12,6 +12,10 @@ env/
 
 # Local caches and generated drafts
 .amap_cache.json
+.goal_reconstruction_cache.json
+goal_reconstruction_poc.csv
+goal_reconstruction_fuel_details_poc.csv
+goal_reconstruction_poc.json
 vehicle_usage_editor_records.json
 fuel_details_editor_records.json
 destination_pool.json

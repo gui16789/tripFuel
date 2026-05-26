@@ -6,6 +6,7 @@ const state = {
   records: [],
   fuelDetails: [],
   destinationPool: [],
+  goalDraft: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -18,6 +19,13 @@ function setStatus(message, isError = false) {
 
 function setFuelStatus(message, isError = false) {
   const status = $("fuelStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
+function setGoalStatus(message, isError = false) {
+  const status = $("goalStatus");
   if (!status) return;
   status.textContent = message;
   status.classList.toggle("error", isError);
@@ -134,6 +142,16 @@ function shuffle(items) {
 
 function defaultDestinationPool() {
   return [];
+}
+
+function monthStart(monthText) {
+  return monthText ? `${monthText}-01` : "";
+}
+
+function monthEnd(monthText) {
+  if (!monthText) return "";
+  const [year, month] = monthText.split("-").map(Number);
+  return formatLocalDate(new Date(year, month, 0));
 }
 
 function renderPriceStrip(prices) {
@@ -574,12 +592,184 @@ async function exportFullExcel() {
   }
 }
 
+function renderGoalDraft(data) {
+  state.goalDraft = data;
+  const summary = data?.summary || {};
+  $("goalTargetSum").textContent = money(summary.target_amount);
+  $("goalAmountSum").textContent = money(summary.generated_amount);
+  $("goalDiffSum").textContent = money(summary.difference);
+  $("goalCountSum").textContent = `${summary.trip_count || 0} / ${summary.fuel_detail_count || 0}`;
+  if (data?.fuel_balance) {
+    const balance = data.fuel_balance;
+    const balanceText = balance.is_valid
+      ? `燃油余额通过：累计加油 ${number2(balance.total_refueled_liters)}L，累计消耗 ${number2(balance.total_consumed_liters)}L，最终剩余 ${number2(balance.final_balance_liters)}L。`
+      : `燃油余额不足：最低余额 ${number2(balance.min_balance_liters)}L，请调整加油日期或行程。`;
+    setGoalStatus(balanceText, !balance.is_valid);
+  }
+
+  const monthlyBody = $("goalMonthlyBody");
+  monthlyBody.innerHTML = "";
+  for (const item of data?.monthly || []) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${item.month}</td>
+      <td>${item.count}</td>
+      <td>${Math.round(item.km)} km</td>
+      <td>${number2(item.amount)}</td>
+    `;
+    monthlyBody.appendChild(row);
+  }
+  if (!monthlyBody.children.length) {
+    monthlyBody.innerHTML = `<tr class="empty-row"><td colspan="4">暂无月度分布。</td></tr>`;
+  }
+
+  const balanceBody = $("goalBalanceBody");
+  balanceBody.innerHTML = "";
+  for (const item of data?.fuel_balance?.checkpoints || []) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${item.date}</td>
+      <td>${number2(item.refueled_liters)}</td>
+      <td>${number2(item.consumed_liters)}</td>
+      <td>${number2(item.balance_liters)}</td>
+    `;
+    balanceBody.appendChild(row);
+  }
+  if (!balanceBody.children.length) {
+    balanceBody.innerHTML = `<tr class="empty-row"><td colspan="4">暂无燃油余额数据。</td></tr>`;
+  }
+
+  const fuelBody = $("goalFuelBody");
+  fuelBody.innerHTML = "";
+  for (const item of data?.fuel_details || []) {
+    const price = Number(item.liters || 0) ? Number(item.amount || 0) / Number(item.liters || 1) : 0;
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${item.date}</td>
+      <td>${number2(item.amount)}</td>
+      <td>${number2(item.liters)}</td>
+      <td>${number2(price)}</td>
+    `;
+    fuelBody.appendChild(row);
+  }
+  if (!fuelBody.children.length) {
+    fuelBody.innerHTML = `<tr class="empty-row"><td colspan="4">暂无加油明细。</td></tr>`;
+  }
+
+  const tripBody = $("goalTripBody");
+  tripBody.innerHTML = "";
+  for (const item of data?.records || []) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${item.date}</td>
+      <td>${item.poi_name || item.destination}</td>
+      <td>${item.district || ""}</td>
+      <td>${item.distance_km}</td>
+      <td>${number2(item.fuel_price)}</td>
+      <td>${number2(calcAmount(item.distance_km, item.fuel_price))}</td>
+    `;
+    tripBody.appendChild(row);
+  }
+  if (!tripBody.children.length) {
+    tripBody.innerHTML = `<tr class="empty-row"><td colspan="6">暂无行程明细。</td></tr>`;
+  }
+
+  $("goalApplyBtn").disabled = !(data?.records || []).length;
+  $("goalExportBtn").disabled = !(data?.records || []).length;
+}
+
+function applyGoalDraft() {
+  if (!state.goalDraft?.records?.length) {
+    setGoalStatus("请先生成重建草稿。", true);
+    return false;
+  }
+  state.records = [...state.goalDraft.records].sort((a, b) => a.date.localeCompare(b.date));
+  state.fuelDetails = [...(state.goalDraft.fuel_details || [])].sort((a, b) => a.date.localeCompare(b.date));
+  renderRecords();
+  renderFuelDetails();
+  setStatus(`已应用倒推草稿：${state.records.length} 条车辆明细。`);
+  setFuelStatus(`已应用倒推草稿：${state.fuelDetails.length} 条加油明细。`);
+  setGoalStatus("已应用到当前明细，可以继续核验或导出完整 Excel。");
+  return true;
+}
+
+async function runGoalGenerate() {
+  const startMonth = $("goalStartMonth").value;
+  const endMonth = $("goalEndMonth").value;
+  const startDate = monthStart(startMonth);
+  const endDate = $("goalEndDate").value || monthEnd(endMonth);
+  const targetAmount = Number($("goalAmount").value || 0);
+  if (!targetAmount || targetAmount <= 0) {
+    setGoalStatus("请填写有效的报销/发票金额。", true);
+    return;
+  }
+  if (!startDate || !endDate || endDate < startDate) {
+    setGoalStatus("请确认起止月份和结束日期。", true);
+    return;
+  }
+
+  const button = $("goalGenerateBtn");
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在生成...";
+  $("goalApplyBtn").disabled = true;
+  $("goalExportBtn").disabled = true;
+  setGoalStatus("正在搜索高德 POI 并计算真实往返路线，可能需要等待几十秒。");
+
+  try {
+    const data = await api("/api/generate/goal", {
+      method: "POST",
+      body: JSON.stringify({
+        target_amount: targetAmount,
+        start_date: startDate,
+        end_date: endDate,
+        vehicle: $("goalVehicle").value.trim() || "吉AKC166",
+        driver: $("goalDriver").value.trim() || "李博",
+        origin: $("origin").value || state.config.origin,
+        city: state.config.city,
+        fuel_rate: Number($("goalFuelRate").value || state.config.fuel_rate),
+        amount_tolerance: Number($("goalTolerance").value || 25),
+        skip_weekends: $("goalSkipWeekends").checked,
+        max_trips_per_day: Number($("goalMaxTrips").value || 1),
+        max_same_destination: Number($("goalSameDestination").value || 2),
+        recent_cooldown: Number($("goalCooldown").value || 10),
+        tank_capacity_liters: Number($("goalTankCapacity").value || 50),
+        initial_fuel_percent: Number($("goalInitialFuelPercent").value || 10),
+        minimum_fuel_percent: Number($("goalMinimumFuelPercent").value || 10),
+        final_fuel_percent: Number($("goalFinalFuelPercent").value || 20),
+        min_refuel_amount: Number($("goalMinRefuelAmount").value || 150),
+        max_refuel_amount: Number($("goalMaxRefuelAmount").value || 280),
+        preferred_refuel_amount: Number($("goalPreferredRefuelAmount").value || 260),
+        max_refuel_liters: Number($("goalMaxRefuelLiters").value || 42),
+        keywords: $("goalKeywords").value,
+      }),
+    });
+    renderGoalDraft(data);
+    const summary = data.summary;
+    const balance = data.fuel_balance;
+    setGoalStatus(
+      `生成完成：${summary.trip_count} 条行程、${summary.fuel_detail_count} 条加油明细。加油合计 ${money(summary.generated_amount)}，行程消耗 ${money(summary.trip_amount)}，最终余油 ${number2(balance?.final_balance_liters)}L，最低余油 ${number2(balance?.min_balance_liters)}L。`
+    );
+  } catch (error) {
+    setGoalStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function exportGoalDraft() {
+  if (!applyGoalDraft()) return;
+  await exportFullExcel();
+}
+
 function switchTab(name) {
   document.querySelectorAll(".tab-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === name);
   });
   $("usageTab").classList.toggle("active", name === "usage");
   $("fuelTab").classList.toggle("active", name === "fuel");
+  $("goalTab").classList.toggle("active", name === "goal");
 }
 
 function renderDestinationPool() {
@@ -1020,6 +1210,7 @@ async function boot() {
   state.config = await api("/api/config", { method: "GET" });
   $("origin").value = state.config.origin;
   $("date").value = "2026-04-08";
+  $("goalFuelRate").value = String(state.config.fuel_rate || 0.09);
   $("amapKey").value = localStorage.getItem("amapKey") || "";
 
   const prices = await api("/api/fuel-prices", { method: "GET" });
@@ -1069,6 +1260,12 @@ $("fuelWorkbookInput").addEventListener("change", importFullWorkbook);
 $("saveFuelDetailsBtn").addEventListener("click", saveFuelDetailsDraft);
 $("exportFuelDetailsBtn").addEventListener("click", exportFuelDetails);
 $("exportFullFuelBtn").addEventListener("click", exportFullExcel);
+$("goalEndMonth").addEventListener("change", () => {
+  $("goalEndDate").value = monthEnd($("goalEndMonth").value);
+});
+$("goalGenerateBtn").addEventListener("click", runGoalGenerate);
+$("goalApplyBtn").addEventListener("click", applyGoalDraft);
+$("goalExportBtn").addEventListener("click", exportGoalDraft);
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
